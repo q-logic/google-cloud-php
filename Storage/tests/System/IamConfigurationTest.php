@@ -118,7 +118,12 @@ class IamConfigurationTest extends StorageTestCase
             'iamConfiguration' => [
                 'uniformBucketLevelAccess' => [
                     'enabled' => $enabled
+                ],
+                /** THIS IS A WORKAROUND */
+                'bucketPolicyOnly' => [
+                    'enabled' => $enabled
                 ]
+                /** THIS IS A WORKAROUND */
             ]
         ];
     }
