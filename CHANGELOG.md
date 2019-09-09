@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.110.0
+
+<details><summary>google/cloud-bigquery 1.11.0</summary>
+
+
+
+### Features
+
+* Update BigQuery's default endpoint ([#2305](https://www.github.com/googleapis/google-cloud-php/issues/2305)) ([ee34ce2](https://www.github.com/googleapis/google-cloud-php/commit/ee34ce2))
+
+</details>
+
+<details><summary>google/cloud-bigtable 1.1.0</summary>
+
+
+
+### Features
+
+* Add IAM management methods. ([#2298](https://www.github.com/googleapis/google-cloud-php/issues/2298)) ([8858563](https://www.github.com/googleapis/google-cloud-php/commit/8858563))
+
+</details>
+
+<details><summary>google/cloud-speech 0.27.0</summary>
+
+
+
+### Features
+
+* Add SpeakerDiarizationConfig to v1 client. ([#2300](https://www.github.com/googleapis/google-cloud-php/issues/2300)) ([ad69110](https://www.github.com/googleapis/google-cloud-php/commit/ad69110))
+
+</details>
+
 ## 0.109.0
 
 <details><summary>google/cloud-bigquerydatatransfer 0.14.0</summary>
