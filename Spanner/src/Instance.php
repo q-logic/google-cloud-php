@@ -31,6 +31,7 @@ use Google\Cloud\Spanner\Admin\Instance\V1\InstanceAdminClient;
 use Google\Cloud\Spanner\Connection\ConnectionInterface;
 use Google\Cloud\Spanner\Connection\IamInstance;
 use Google\Cloud\Spanner\Session\SessionPoolInterface;
+use Google\Protobuf\FieldMask;
 
 /**
  * Represents a Cloud Spanner instance
@@ -120,6 +121,11 @@ class Instance
     private $iam;
 
     /**
+     * @var array|null
+     */
+    private $endpoints;
+
+    /**
      * Create an object representing a Cloud Spanner instance.
      *
      * @param ConnectionInterface $connection The connection to the
@@ -148,6 +154,7 @@ class Instance
         $this->name = $this->fullyQualifiedInstanceName($name, $projectId);
         $this->returnInt64AsObject = $returnInt64AsObject;
         $this->info = $info;
+        $this->endpoints = null;
 
         $this->setLroProperties($lroConnection, $lroCallables, $this->name);
     }
@@ -233,10 +240,22 @@ class Instance
      */
     public function reload(array $options = [])
     {
+        $routing = is_null($this->endpoints) && getenv('GOOGLE_CLOUD_ENABLE_RESOURCE_BASED_ROUTING');
+        if ($routing) {
+            $options += ['fieldMask' => new FieldMask(['paths'=>['endpoint_uris']])];
+        }
         $this->info = $this->connection->getInstance($options + [
             'name' => $this->name,
             'projectId' => $this->projectId
         ]);
+
+        if ($routing) {
+            $this->endpoints = $this->info['endpointUris'];
+            $apiEndpoint = $this->endpoint();
+            if (!is_null($apiEndpoint)) {
+                $this->connection->init(['apiEndpoint' => $apiEndpoint]);
+            }
+        }
 
         return $this->info;
     }
@@ -420,6 +439,7 @@ class Instance
      */
     public function database($name, array $options = [])
     {
+        $this->reload();
         return new Database(
             $this->connection,
             $this,
@@ -430,6 +450,15 @@ class Instance
             isset($options['sessionPool']) ? $options['sessionPool'] : null,
             $this->returnInt64AsObject
         );
+    }
+
+    /**
+     * Get endpoint form list or null if list is empty
+     * @return string|null
+     */
+    public function endpoint()
+    {
+        return ($this->endpoints && count($this->endpoints)) ? $this->endpoints[0] : null;
     }
 
     /**

@@ -89,6 +89,11 @@ class Grpc implements ConnectionInterface
     /**
      * @var array
      */
+    private $config;
+
+    /**
+     * @var array
+     */
     private $mutationSetters = [
         'insert' => 'setInsert',
         'update' => 'setUpdate',
@@ -153,6 +158,16 @@ class Grpc implements ConnectionInterface
 
         $config['serializer'] = $this->serializer;
         $this->setRequestWrapper(new GrpcRequestWrapper($config));
+        $this->config = $config;
+        $this->init();
+    }
+
+    /**
+     * @param array $configAdd [optional]
+     */
+    public function init($configAdd = [])
+    {
+        $config = $this->config + $configAdd;
         $grpcConfig = $this->getGaxConfig(
             ManualSpannerClient::VERSION,
             isset($config['authHttpHandler'])
@@ -1062,7 +1077,7 @@ class Grpc implements ConnectionInterface
      *
      * @return InstanceAdminClient
      */
-    private function getInstanceAdminClient()
+    private function getInstanceAdminClient($options = [])
     {
         //@codeCoverageIgnoreStart
         if ($this->instanceAdminClient) {
@@ -1070,7 +1085,10 @@ class Grpc implements ConnectionInterface
         }
         //@codeCoverageIgnoreEnd
 
-        $this->instanceAdminClient = $this->constructGapic(InstanceAdminClient::class, $this->grpcConfig);
+        $this->instanceAdminClient = $this->constructGapic(
+            InstanceAdminClient::class,
+            $options + $this->grpcConfig
+        );
 
         return $this->instanceAdminClient;
     }

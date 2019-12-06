@@ -212,4 +212,9 @@ interface ConnectionInterface
      * @param array $args
      */
     public function partitionRead(array $args);
+
+    /**
+     * @param array $args
+     */
+    public function init(array $args);
 }
