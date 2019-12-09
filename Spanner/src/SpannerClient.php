@@ -192,7 +192,7 @@ class SpannerClient
     private function createLroProperties(ConnectionInterface $connection)
     {
         return [
-            new LongRunningConnection($connection), 
+            new LongRunningConnection($connection),
             [
                 [
                     'typeUrl' => 'type.googleapis.com/google.spanner.admin.instance.v1.UpdateInstanceMetadata',
@@ -377,27 +377,20 @@ class SpannerClient
             $instance
         );
 
-        if (
-            !isset($this->config['apiEndpoint']) &&
-            getenv('GOOGLE_CLOUD_ENABLE_RESOURCE_BASED_ROUTING') &&
-            !isset($this->endpoints[$instanceObject->name()])
+        if (!isset($this->config['apiEndpoint']) &&
+            getenv('GOOGLE_CLOUD_ENABLE_RESOURCE_BASED_ROUTING')
         ) {
-            $instanceInfo = $instanceObject->info([
-                'fieldMask' => new FieldMask(['paths'=>['endpoint_uris']])
-            ]);
-            $this->endpoints[$instanceObject->name()] = $instanceInfo['endpointUris'];
+            if (!isset($this->endpoints[$instanceObject->name()])) {
+                $instanceInfo = $instanceObject->info([
+                    'fieldMask' => new FieldMask(['paths' => ['endpoint_uris']])
+                ]);
+                $this->endpoints[$instanceObject->name()] = $instanceInfo['endpointUris'];
+            }
+
             if (!is_null($apiEndpoint = $this->endpoint($instanceObject->name()))) {
                 $connection = $this->createConnection(['apiEndpoint' => $apiEndpoint]);
-                list($lroConnection, $lroCallables, $resource) = $this->createLroProperties($connection);
-                $instanceObject = new Instance(
-                    $connection,
-                    $lroConnection,
-                    $lroCallables,
-                    $this->projectId,
-                    $name,
-                    $this->returnInt64AsObject,
-                    $instance
-                );
+                list($lroConnection, $lroCallables) = $this->createLroProperties($connection);
+                $instanceObject->connectionUpdate($connection, $lroConnection, $lroCallables);
             }
         }
 
@@ -417,7 +410,8 @@ class SpannerClient
      *
      * @return string|null
      */
-    private function endpoint($instanceName) {
+    private function endpoint($instanceName)
+    {
         return isset($this->endpoints[$instanceName]) && count($this->endpoints[$instanceName])
             ? $this->endpoints[$instanceName][0] : null;
     }

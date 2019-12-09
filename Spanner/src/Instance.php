@@ -143,12 +143,29 @@ class Instance
         $returnInt64AsObject = false,
         array $info = []
     ) {
-        $this->connection = $connection;
         $this->projectId = $projectId;
         $this->name = $this->fullyQualifiedInstanceName($name, $projectId);
         $this->returnInt64AsObject = $returnInt64AsObject;
         $this->info = $info;
+        $this->connectionUpdate($connection, $lroConnection, $lroCallables);
+    }
 
+    /**
+     * Update gRPC connection, LongRunningConnection and array lroCallables in this object
+     * @param ConnectionInterface $connection gRPC connection.
+     * @param LongRunningConnectionInterface $lroConnection The LRO Connection.
+     * @param array $lroCallables An collection of form [(string) typeUrl, (callable) callable]
+     *        providing a function to invoke when an operation completes. The
+     *        callable Type should correspond to an expected value of
+     *        operation.metadata.typeUrl.
+     *
+     *  */
+    public function connectionUpdate(
+        ConnectionInterface $connection,
+        LongRunningConnectionInterface $lroConnection,
+        array $lroCallables
+    ) {
+        $this->connection = $connection;
         $this->setLroProperties($lroConnection, $lroCallables, $this->name);
     }
 
