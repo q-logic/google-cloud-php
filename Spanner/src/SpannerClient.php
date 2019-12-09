@@ -31,9 +31,11 @@ use Google\Cloud\Spanner\Admin\Database\V1\DatabaseAdminClient;
 use Google\Cloud\Spanner\Admin\Instance\V1\InstanceAdminClient;
 use Google\Cloud\Spanner\Batch\BatchClient;
 use Google\Cloud\Spanner\Connection\Grpc;
+use Google\Cloud\Spanner\Connection\ConnectionInterface;
 use Google\Cloud\Spanner\Connection\LongRunningConnection;
 use Google\Cloud\Spanner\Session\SessionPoolInterface;
 use Google\Cloud\Spanner\V1\SpannerClient as GapicSpannerClient;
+use Google\Protobuf\FieldMask;
 use Psr\Cache\CacheItemPoolInterface;
 use Psr\Http\StreamInterface;
 
@@ -93,6 +95,16 @@ class SpannerClient
     private $returnInt64AsObject;
 
     /**
+     * @var array
+     */
+    private $config;
+
+    /**
+     * @var array
+     */
+    private $endpoints;
+
+    /**
      * Create a Spanner client. Please note that this client requires
      * [the gRPC extension](https://cloud.google.com/php/grpc).
      *
@@ -140,35 +152,74 @@ class SpannerClient
             'returnInt64AsObject' => false,
             'projectIdRequired' => true
         ];
-
-        $this->connection = new Grpc($this->configureAuthentication($config));
+        $this->config = $config;
+        $this->connection = $this->createConnection();
         $this->returnInt64AsObject = $config['returnInt64AsObject'];
+        $this->endpoints = array();
 
-        $this->setLroProperties(new LongRunningConnection($this->connection), [
+        list($lroConnection, $lroCallables, $resource) = $this->createLroProperties($this->connection);
+        $this->setLroProperties($lroConnection, $lroCallables, $resource);
+    }
+
+    /**
+     * Create new gRPC connection with config from constuctor and additional options.
+     *
+     * Example:
+     * ```
+     * $connection = $this->createConnection(['apiEndpoint' => 'api-endpoint']);
+     * ```
+     *
+     * @param array $configAdd Optional. Additional config options
+     * @return ConnectionInterface
+     */
+    private function createConnection(array $configAdd = [])
+    {
+        return new Grpc($this->configureAuthentication($configAdd + $this->config));
+    }
+
+    /**
+     * Create params for LROTrait::setLroProperties with defined connection
+     *
+     * Example:
+     * ```
+     * list($lroConnection, $lroCallables, $resource) = $this->createLroProperties($connection);
+     * $this->setLroProperties($lroConnection, $lroCallables, $resource);
+     * ```
+     *
+     * @param ConnectionInterface $connection Using Grpc connection
+     * @return array
+     */
+    private function createLroProperties(ConnectionInterface $connection)
+    {
+        return [
+            new LongRunningConnection($connection), 
             [
-                'typeUrl' => 'type.googleapis.com/google.spanner.admin.instance.v1.UpdateInstanceMetadata',
-                'callable' => function ($instance) {
-                    $name = InstanceAdminClient::parseName($instance['name'])['instance'];
-                    return $this->instance($name, $instance);
-                }
-            ], [
-                'typeUrl' => 'type.googleapis.com/google.spanner.admin.database.v1.CreateDatabaseMetadata',
-                'callable' => function ($database) {
-                    $databaseNameComponents = DatabaseAdminClient::parseName($database['name']);
-                    $instanceName = $databaseNameComponents['instance'];
-                    $databaseName = $databaseNameComponents['database'];
+                [
+                    'typeUrl' => 'type.googleapis.com/google.spanner.admin.instance.v1.UpdateInstanceMetadata',
+                    'callable' => function ($instance) {
+                        $name = InstanceAdminClient::parseName($instance['name'])['instance'];
+                        return $this->instance($name, $instance);
+                    }
+                ], [
+                    'typeUrl' => 'type.googleapis.com/google.spanner.admin.database.v1.CreateDatabaseMetadata',
+                    'callable' => function ($database) {
+                        $databaseNameComponents = DatabaseAdminClient::parseName($database['name']);
+                        $instanceName = $databaseNameComponents['instance'];
+                        $databaseName = $databaseNameComponents['database'];
 
-                    $instance = $this->instance($instanceName);
-                    return $instance->database($databaseName);
-                }
-            ], [
-                'typeUrl' => 'type.googleapis.com/google.spanner.admin.instance.v1.CreateInstanceMetadata',
-                'callable' => function ($instance) {
-                    $name = InstanceAdminClient::parseName($instance['name'])['instance'];
-                    return $this->instance($name, $instance);
-                }
-            ]
-        ]);
+                        $instance = $this->instance($instanceName);
+                        return $instance->database($databaseName);
+                    }
+                ], [
+                    'typeUrl' => 'type.googleapis.com/google.spanner.admin.instance.v1.CreateInstanceMetadata',
+                    'callable' => function ($instance) {
+                        $name = InstanceAdminClient::parseName($instance['name'])['instance'];
+                        return $this->instance($name, $instance);
+                    }
+                ]
+            ],
+            null
+        ];
     }
 
     /**
@@ -316,7 +367,7 @@ class SpannerClient
      */
     public function instance($name, array $instance = [])
     {
-        return new Instance(
+        $instanceObject = new Instance(
             $this->connection,
             $this->lroConnection,
             $this->lroCallables,
@@ -325,6 +376,50 @@ class SpannerClient
             $this->returnInt64AsObject,
             $instance
         );
+
+        if (
+            !isset($this->config['apiEndpoint']) &&
+            getenv('GOOGLE_CLOUD_ENABLE_RESOURCE_BASED_ROUTING') &&
+            !isset($this->endpoints[$instanceObject->name()])
+        ) {
+            $instanceInfo = $instanceObject->info([
+                'fieldMask' => new FieldMask(['paths'=>['endpoint_uris']])
+            ]);
+            $this->endpoints[$instanceObject->name()] = $instanceInfo['endpointUris'];
+            if (!is_null($apiEndpoint = $this->endpoint($instanceObject->name()))) {
+                $connection = $this->createConnection(['apiEndpoint' => $apiEndpoint]);
+                list($lroConnection, $lroCallables, $resource) = $this->createLroProperties($connection);
+                $instanceObject = new Instance(
+                    $connection,
+                    $lroConnection,
+                    $lroCallables,
+                    $this->projectId,
+                    $name,
+                    $this->returnInt64AsObject,
+                    $instance
+                );
+            }
+        }
+
+        return $instanceObject;
+    }
+
+    /**
+     * Return endpoint for the specified instance, or null if the list for this
+     * instance is empty.
+     *
+     * Example:
+     * ```
+     * if (!is_null($apiEndpoint = $this->endpoint($instance->name()))) {
+     *     // do someting with $apiEndpoint
+     * }
+     * ```
+     *
+     * @return string|null
+     */
+    private function endpoint($instanceName) {
+        return isset($this->endpoints[$instanceName]) && count($this->endpoints[$instanceName])
+            ? $this->endpoints[$instanceName][0] : null;
     }
 
     /**
