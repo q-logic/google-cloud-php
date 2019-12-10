@@ -382,7 +382,15 @@ class SpannerClient
         ) {
             if (!isset($this->endpoints[$instanceObject->name()])) {
                 $instanceInfo = $instanceObject->info([
-                    'fieldMask' => new FieldMask(['paths' => ['endpoint_uris']])
+                    'fieldMask' => new FieldMask(['paths' => [
+                        'name',
+                        'config',
+                        'display_name',
+                        'node_count',
+                        'state',
+                        'labels',
+                        'endpoint_uris'
+                    ]])
                 ]);
                 $this->endpoints[$instanceObject->name()] = $instanceInfo['endpointUris'];
             }
