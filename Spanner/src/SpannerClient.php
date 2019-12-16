@@ -141,6 +141,12 @@ class SpannerClient
             'projectIdRequired' => true
         ];
 
+        if ((false !== ($routingEnv = getenv('GOOGLE_CLOUD_ENABLE_RESOURCE_BASED_ROUTING'))) &&
+            !empty($routingEnv) &&
+            ('false' != strtolower($routingEnv))
+        ) {
+            $config['enableCaching'] = true;
+        }
         $this->connection = new Grpc($this->configureAuthentication($config));
         $this->returnInt64AsObject = $config['returnInt64AsObject'];
 

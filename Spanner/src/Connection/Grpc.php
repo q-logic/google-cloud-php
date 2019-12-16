@@ -17,6 +17,8 @@
 
 namespace Google\Cloud\Spanner\Connection;
 
+use Google\ApiCore\ApiException;
+use Google\ApiCore\ApiStatus;
 use Google\ApiCore\Call;
 use Google\ApiCore\CredentialsWrapper;
 use Google\ApiCore\Serializer;
@@ -72,9 +74,24 @@ class Grpc implements ConnectionInterface
     private $databaseAdminClient;
 
     /**
-     * @var SpannerClient
+     * @var SpannerClient|null
      */
     private $spannerClient;
+
+    /**
+     * @var array
+     */
+    private $spannerClients;
+
+    /**
+     * @var array
+     */
+    private $endpointUris;
+
+    /**
+     * @var bool
+     */
+    private $enableResourceCaching;
 
     /**
      * @var Serializer
@@ -166,10 +183,13 @@ class Grpc implements ConnectionInterface
             $grpcConfig['apiEndpoint'] = $config['apiEndpoint'];
         }
 
-        $this->spannerClient = isset($config['gapicSpannerClient'])
-            ? $config['gapicSpannerClient']
-            : $this->constructGapic(SpannerClient::class, $grpcConfig);
+        $this->enableResourceCaching = isset($config['enableCaching']) && $config['enableCaching'];
+        $this->endpointUris=array();
+        $this->spannerClients=array();
 
+        if (isset($config['gapicSpannerClient'])) {
+            $this->spannerClient = $config['gapicSpannerClient'];
+        }
         //@codeCoverageIgnoreStart
         if (isset($config['gapicSpannerInstanceAdminClient'])) {
             $this->instanceAdminClient = $config['gapicSpannerInstanceAdminClient'];
@@ -225,6 +245,15 @@ class Grpc implements ConnectionInterface
     public function getInstance(array $args)
     {
         $projectId = $this->pluck('projectId', $args);
+
+        if (is_array($fieldMaskArg = $this->pluck('fieldMask', $args))) {
+            $mask = [];
+            foreach ($fieldMaskArg as $key) {
+                $mask[] = Serializer::toSnakeCase($key);
+            }
+            $args['fieldMask'] = $this->serializer->decodeMessage(new FieldMask, ['paths' => $mask]);
+        }
+
         return $this->send([$this->getInstanceAdminClient(), 'getInstance'], [
             $this->pluck('name', $args),
             $this->addResourcePrefixHeader($args, $projectId)
@@ -443,13 +472,15 @@ class Grpc implements ConnectionInterface
     public function createSession(array $args)
     {
         $databaseName = $this->pluck('database', $args);
+        $databaseParsed = SpannerClient::parseName($databaseName);
+        $intanceName = InstanceAdminClient::instanceName($databaseParsed['project'], $databaseParsed['instance']);
 
         $session = $this->pluck('session', $args, false);
         if ($session) {
             $args['session'] = $this->serializer->decodeMessage(new Session, $session);
         }
 
-        return $this->send([$this->spannerClient, 'createSession'], [
+        return $this->send([$this->getSpannerClient($intanceName), 'createSession'], [
             $databaseName,
             $this->addResourcePrefixHeader($args, $databaseName)
         ]);
@@ -467,9 +498,11 @@ class Grpc implements ConnectionInterface
     public function createSessionAsync(array $args)
     {
         $database = $this->pluck('database', $args);
+        $databaseParsed = SpannerClient::parseName($database);
+        $intanceName = InstanceAdminClient::instanceName($databaseParsed['project'], $databaseParsed['instance']);
         $opts = $this->addResourcePrefixHeader([], $database);
         $opts['credentialsWrapper'] = $this->credentialsWrapper;
-        $transport = $this->spannerClient->getTransport();
+        $transport = $this->getSpannerClient($intanceName)->getTransport();
 
         $request = new CreateSessionRequest([
             'database' => $database
@@ -503,7 +536,9 @@ class Grpc implements ConnectionInterface
         );
 
         $database = $this->pluck('database', $args);
-        return $this->send([$this->spannerClient, 'batchCreateSessions'], [
+        $databaseParsed = SpannerClient::parseName($database);
+        $intanceName = InstanceAdminClient::instanceName($databaseParsed['project'], $databaseParsed['instance']);
+        return $this->send([$this->getSpannerClient($intanceName), 'batchCreateSessions'], [
             $database,
             $this->pluck('sessionCount', $args),
             $this->addResourcePrefixHeader($args, $database)
@@ -516,8 +551,11 @@ class Grpc implements ConnectionInterface
     public function getSession(array $args)
     {
         $database = $this->pluck('database', $args);
-        return $this->send([$this->spannerClient, 'getSession'], [
-            $this->pluck('name', $args),
+        $session = $this->pluck('name', $args);
+        $sessionParsed = SpannerClient::parseName($session);
+        $intanceName = InstanceAdminClient::instanceName($sessionParsed['project'], $sessionParsed['instance']);
+        return $this->send([$this->getSpannerClient($intanceName), 'getSession'], [
+            $session,
             $this->addResourcePrefixHeader($args, $database)
         ]);
     }
@@ -528,8 +566,11 @@ class Grpc implements ConnectionInterface
     public function deleteSession(array $args)
     {
         $database = $this->pluck('database', $args);
-        return $this->send([$this->spannerClient, 'deleteSession'], [
-            $this->pluck('name', $args),
+        $session = $this->pluck('name', $args);
+        $sessionParsed = SpannerClient::parseName($session);
+        $intanceName = InstanceAdminClient::instanceName($sessionParsed['project'], $sessionParsed['instance']);
+        return $this->send([$this->getSpannerClient($intanceName), 'deleteSession'], [
+            $session,
             $this->addResourcePrefixHeader($args, $database)
         ]);
     }
@@ -546,10 +587,13 @@ class Grpc implements ConnectionInterface
     public function deleteSessionAsync(array $args)
     {
         $database = $this->pluck('database', $args);
+        $session = $this->pluck('name', $args);
+        $sessionParsed = SpannerClient::parseName($session);
+        $intanceName = InstanceAdminClient::instanceName($sessionParsed['project'], $sessionParsed['instance']);
         $request = new DeleteSessionRequest();
-        $request->setName($this->pluck('name', $args));
+        $request->setName($session);
 
-        $transport = $this->spannerClient->getTransport();
+        $transport = $this->getSpannerClient($intanceName)->getTransport();
         $opts = $this->addResourcePrefixHeader([], $database);
         $opts['credentialsWrapper'] = $this->credentialsWrapper;
 
@@ -573,9 +617,12 @@ class Grpc implements ConnectionInterface
         $args['transaction'] = $this->createTransactionSelector($args);
 
         $database = $this->pluck('database', $args);
+        $session = $this->pluck('session', $args);
+        $sessionParsed = SpannerClient::parseName($session);
+        $intanceName = InstanceAdminClient::instanceName($sessionParsed['project'], $sessionParsed['instance']);
 
-        return $this->send([$this->spannerClient, 'executeStreamingSql'], [
-            $this->pluck('session', $args),
+        return $this->send([$this->getSpannerClient($intanceName), 'executeStreamingSql'], [
+            $session,
             $this->pluck('sql', $args),
             $this->addResourcePrefixHeader($args, $database)
         ]);
@@ -593,8 +640,12 @@ class Grpc implements ConnectionInterface
         $args['transaction'] = $this->createTransactionSelector($args);
 
         $database = $this->pluck('database', $args);
-        return $this->send([$this->spannerClient, 'streamingRead'], [
-            $this->pluck('session', $args),
+        $session = $this->pluck('session', $args);
+        $sessionParsed = SpannerClient::parseName($session);
+        $intanceName = InstanceAdminClient::instanceName($sessionParsed['project'], $sessionParsed['instance']);
+
+        return $this->send([$this->getSpannerClient($intanceName), 'streamingRead'], [
+            $session,
             $this->pluck('table', $args),
             $this->pluck('columns', $args),
             $keySet,
@@ -616,8 +667,12 @@ class Grpc implements ConnectionInterface
             $statements[] = $this->serializer->decodeMessage(new Statement, $statement);
         }
 
-        return $this->send([$this->spannerClient, 'executeBatchDml'], [
-            $this->pluck('session', $args),
+        $session = $this->pluck('session', $args);
+        $sessionParsed = SpannerClient::parseName($session);
+        $intanceName = InstanceAdminClient::instanceName($sessionParsed['project'], $sessionParsed['instance']);
+
+        return $this->send([$this->getSpannerClient($intanceName), 'executeBatchDml'], [
+            $session,
             $this->pluck('transaction', $args),
             $statements,
             $this->pluck('seqno', $args),
@@ -648,8 +703,12 @@ class Grpc implements ConnectionInterface
         }
 
         $database = $this->pluck('database', $args);
-        return $this->send([$this->spannerClient, 'beginTransaction'], [
-            $this->pluck('session', $args),
+        $session = $this->pluck('session', $args);
+        $sessionParsed = SpannerClient::parseName($session);
+        $intanceName = InstanceAdminClient::instanceName($sessionParsed['project'], $sessionParsed['instance']);
+
+        return $this->send([$this->getSpannerClient($intanceName), 'beginTransaction'], [
+            $session,
             $options,
             $this->addResourcePrefixHeader($args, $database)
         ]);
@@ -716,8 +775,12 @@ class Grpc implements ConnectionInterface
         }
 
         $database = $this->pluck('database', $args);
-        return $this->send([$this->spannerClient, 'commit'], [
-            $this->pluck('session', $args),
+        $session = $this->pluck('session', $args);
+        $sessionParsed = SpannerClient::parseName($session);
+        $intanceName = InstanceAdminClient::instanceName($sessionParsed['project'], $sessionParsed['instance']);
+
+        return $this->send([$this->getSpannerClient($intanceName), 'commit'], [
+            $session,
             $mutations,
             $this->addResourcePrefixHeader($args, $database)
         ]);
@@ -729,8 +792,12 @@ class Grpc implements ConnectionInterface
     public function rollback(array $args)
     {
         $database = $this->pluck('database', $args);
-        return $this->send([$this->spannerClient, 'rollback'], [
-            $this->pluck('session', $args),
+        $session = $this->pluck('session', $args);
+        $sessionParsed = SpannerClient::parseName($session);
+        $intanceName = InstanceAdminClient::instanceName($sessionParsed['project'], $sessionParsed['instance']);
+
+        return $this->send([$this->getSpannerClient($intanceName), 'rollback'], [
+            $session,
             $this->pluck('transactionId', $args),
             $this->addResourcePrefixHeader($args, $database)
         ]);
@@ -750,8 +817,12 @@ class Grpc implements ConnectionInterface
         );
 
         $database = $this->pluck('database', $args);
-        return $this->send([$this->spannerClient, 'partitionQuery'], [
-            $this->pluck('session', $args),
+        $session = $this->pluck('session', $args);
+        $sessionParsed = SpannerClient::parseName($session);
+        $intanceName = InstanceAdminClient::instanceName($sessionParsed['project'], $sessionParsed['instance']);
+
+        return $this->send([$this->getSpannerClient($intanceName), 'partitionQuery'], [
+            $session,
             $this->pluck('sql', $args),
             $this->addResourcePrefixHeader($args, $database)
         ]);
@@ -773,8 +844,12 @@ class Grpc implements ConnectionInterface
         );
 
         $database = $this->pluck('database', $args);
-        return $this->send([$this->spannerClient, 'partitionRead'], [
-            $this->pluck('session', $args),
+        $session = $this->pluck('session', $args);
+        $sessionParsed = SpannerClient::parseName($session);
+        $intanceName = InstanceAdminClient::instanceName($sessionParsed['project'], $sessionParsed['instance']);
+
+        return $this->send([$this->getSpannerClient($intanceName), 'partitionRead'], [
+            $session,
             $this->pluck('table', $args),
             $keySet,
             $this->addResourcePrefixHeader($args, $database)
@@ -1091,5 +1166,72 @@ class Grpc implements ConnectionInterface
         $this->databaseAdminClient = $this->constructGapic(DatabaseAdminClient::class, $this->grpcConfig);
 
         return $this->databaseAdminClient;
+    }
+
+    /**
+     * Allow lazy instantiation of the spanner client.
+     * If routing is enabled, a SpannerClient is returned for a specific instanceName
+     * with a binding in the connection of a specific endpoint.
+     * If the endpoint list is not requested, a request is first made for this instanceName.
+     *
+     * @param string $instanceName Optional. Full name of instance.
+     * @return SpannerClient
+     */
+    private function getSpannerClient($instanceName = null)
+    {
+        if (!$this->spannerClient) {
+            $this->spannerClient = $this->constructGapic(SpannerClient::class, $this->grpcConfig);
+        }
+
+        if ($this->enableResourceCaching) {
+            if (isset($this->spannerClients[$instanceName])) {
+                return $this->spannerClients[$instanceName];
+            } elseif (!isEmpty($instanceName) && !isset($this->endpointUris[$instanceName])) {
+                $parsed = InstanceAdminClient::parseName($instanceName);
+                $projectId = $parsed['project'];
+
+                try {
+                    $instanceInfo = $this->getInstance([
+                        'projectId' => $projectId,
+                        'name' => $instanceName,
+                        'fieldMask' => ['endpointUris']
+                    ]);
+                    $this->endpointUris[$instanceName] = $instanceInfo['endpointUris'];
+                    if (!is_null($apiEndpoint = $this->endpoint($instanceName))) {
+                        $grpcConfig = $this->grpcConfig;
+                        $grpcConfig['apiEndpoint'] = $apiEndpoint;
+                        return $this->spannerClients[$instanceName] =
+                            $this->constructGapic(SpannerClient::class, $grpcConfig);
+                    }
+                } catch (ApiException $ex) {
+                    if (ApiStatus::PERMISSION_DENIED == $ex->getStatus()) {
+                        print($ex->getMessage() . EOL);
+                    } else {
+                        throw $ex;
+                    }
+                }
+            }
+        }
+
+        return $this->spannerClient;
+    }
+
+    /**
+     * Return endpoint for the specified instance, or null if the list for this
+     * instance is empty.
+     *
+     * Example:
+     * ```
+     * if (!is_null($apiEndpoint = $this->endpoint($instance->name()))) {
+     *     // do someting with $apiEndpoint
+     * }
+     * ```
+     *
+     * @return string|null
+     */
+    private function endpoint($instanceName)
+    {
+        return isset($this->endpointUris[$instanceName]) && count($this->endpointUris[$instanceName])
+            ? $this->endpointUris[$instanceName][0] : null;
     }
 }
