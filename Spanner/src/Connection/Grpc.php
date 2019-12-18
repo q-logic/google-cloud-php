@@ -74,7 +74,7 @@ class Grpc implements ConnectionInterface
     private $databaseAdminClient;
 
     /**
-     * @var SpannerClient|null
+     * @var SpannerClient
      */
     private $spannerClient;
 
@@ -184,8 +184,8 @@ class Grpc implements ConnectionInterface
         }
 
         $this->enableResourceCaching = isset($config['enableCaching']) && $config['enableCaching'];
-        $this->endpointUris=array();
-        $this->spannerClients=array();
+        $this->endpointUris = [];
+        $this->spannerClients = [];
 
         if (isset($config['gapicSpannerClient'])) {
             $this->spannerClient = $config['gapicSpannerClient'];
@@ -245,15 +245,6 @@ class Grpc implements ConnectionInterface
     public function getInstance(array $args)
     {
         $projectId = $this->pluck('projectId', $args);
-
-        if (is_array($fieldMaskArg = $this->pluck('fieldMask', $args))) {
-            $mask = [];
-            foreach ($fieldMaskArg as $key) {
-                $mask[] = Serializer::toSnakeCase($key);
-            }
-            $args['fieldMask'] = $this->serializer->decodeMessage(new FieldMask, ['paths' => $mask]);
-        }
-
         return $this->send([$this->getInstanceAdminClient(), 'getInstance'], [
             $this->pluck('name', $args),
             $this->addResourcePrefixHeader($args, $projectId)
@@ -472,8 +463,7 @@ class Grpc implements ConnectionInterface
     public function createSession(array $args)
     {
         $databaseName = $this->pluck('database', $args);
-        $databaseParsed = SpannerClient::parseName($databaseName);
-        $intanceName = InstanceAdminClient::instanceName($databaseParsed['project'], $databaseParsed['instance']);
+        $intanceName = $this->pluck('name', $args);
 
         $session = $this->pluck('session', $args, false);
         if ($session) {
@@ -1179,16 +1169,11 @@ class Grpc implements ConnectionInterface
      */
     private function getSpannerClient($instanceName = null)
     {
-        if (!$this->spannerClient) {
-            $this->spannerClient = $this->constructGapic(SpannerClient::class, $this->grpcConfig);
-        }
-
         if ($this->enableResourceCaching) {
             if (isset($this->spannerClients[$instanceName])) {
                 return $this->spannerClients[$instanceName];
-            } elseif (!isEmpty($instanceName) && !isset($this->endpointUris[$instanceName])) {
-                $parsed = InstanceAdminClient::parseName($instanceName);
-                $projectId = $parsed['project'];
+            } elseif (!isset($this->endpointUris[$instanceName])) {
+                $projectId = InstanceAdminClient::parseName($instanceName)['project'];
 
                 try {
                     $instanceInfo = $this->getInstance([
@@ -1211,6 +1196,10 @@ class Grpc implements ConnectionInterface
                     }
                 }
             }
+        }
+
+        if (!$this->spannerClient) {
+            $this->spannerClient = $this->constructGapic(SpannerClient::class, $this->grpcConfig);
         }
 
         return $this->spannerClient;
