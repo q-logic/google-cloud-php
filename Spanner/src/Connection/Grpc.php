@@ -225,13 +225,8 @@ class Grpc implements ConnectionInterface
     public function getInstance(array $args)
     {
         $projectId = $this->pluck('projectId', $args);
-
-        if (is_array($fieldMaskArg = $this->pluck('fieldMask', $args))) {
-            $mask = [];
-            foreach ($fieldMaskArg as $key) {
-                $mask[] = Serializer::toSnakeCase($key);
-            }
-            $args['fieldMask'] = $this->serializer->decodeMessage(new FieldMask, ['paths' => $mask]);
+        if (is_array($fieldMaskArg = $this->pluck('fieldMask', $args, false))) {
+            $args['fieldMask'] = $this->fieldMask($fieldMaskArg);
         }
 
         return $this->send([$this->getInstanceAdminClient(), 'getInstance'], [
