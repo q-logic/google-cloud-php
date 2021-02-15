@@ -559,7 +559,12 @@ class CacheSessionPoolTest extends TestCase
                     'maxInUseSessions' => 1
                 ],
                 [
-                    'queue' => [],
+                    'queue' => [
+                        [
+                            'name' => 'expiresSoon',
+                            'expiration' => $time + 1500
+                        ],
+                    ],
                     'inUse' => [
                         'session' => [
                             'name' => 'session',
@@ -634,8 +639,8 @@ class CacheSessionPoolTest extends TestCase
                 [
                     'queue' => [],
                     'inUse' => [
-                        'session1' => [
-                            'name' => 'session1',
+                        'session4' => [
+                            'name' => 'session4',
                             'expiration' => $time + 3600,
                             'lastActive' => $time
                         ]
